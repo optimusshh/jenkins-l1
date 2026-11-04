@@ -2,10 +2,15 @@ pipeline {
     agent any
 
     stages {
-
         stage('Checkout') {
             steps {
-                echo 'Source code is available'
+                echo 'Repository successfully checked out'
+                sh '''
+                    echo "Repository files:"
+                    ls -la
+                    echo "Git commit:"
+                    git rev-parse --short HEAD
+                '''
             }
         }
 
@@ -15,6 +20,7 @@ pipeline {
                     echo "Building application..."
                     mkdir -p build
                     echo "Hello from GitHub and Jenkins" > build/index.html
+                    echo "Build completed"
                 '''
             }
         }
@@ -24,12 +30,10 @@ pipeline {
                 sh '''
                     echo "Testing application..."
                     test -f build/index.html
-                    cat build/index.html
+                    grep -q "Hello from GitHub and Jenkins" build/index.html
+                    echo "All tests passed!"
                 '''
             }
         }
-
     }
 }
-
-
