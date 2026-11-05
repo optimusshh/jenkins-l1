@@ -19,7 +19,7 @@ pipeline {
                 sh '''
                     echo "Building application..."
                     mkdir -p build
-                    echo "Hello from GitHub and Jenkins via github manual build stage" > build/index.html
+                    echo "Hello from GitHub and Jenkins via github manual stage" > build/index.html
                     echo "Build completed"
                 '''
             }
@@ -30,7 +30,7 @@ pipeline {
                 sh '''
                     echo "Testing application..."
                     test -f build/index.html
-                    grep -q "Hello from GitHub and Jenkins via github manual test stage" build/index.html
+                    grep -q "Hello from GitHub and Jenkins via github manual stage" build/index.html
                     echo "All tests passed!"
                 '''
             }
