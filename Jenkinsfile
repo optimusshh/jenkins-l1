@@ -4,7 +4,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo 'Repository successfully checked out'
+                echo 'Repository automatically checked out using Poll SC'
                 sh '''
                     echo "Repository files:"
                     ls -la
