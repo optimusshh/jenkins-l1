@@ -49,7 +49,21 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                echo 'Deploying application to VM3'
+                echo 'Deploying application to VM3'stage('Verify') {
+    steps {
+        sh '''
+            echo "Checking application availability..."
+
+            HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" http://192.168.31.190/)
+
+            echo "HTTP Status: $HTTP_CODE"
+
+            test "$HTTP_CODE" = "200"
+
+            echo "Application is responding successfully!"
+        '''
+    }
+}
 
                 sh '''
                     scp -i /home/jenkins-agent/.ssh/id_ed25519 \
@@ -68,3 +82,4 @@ pipeline {
         }
     }
 }
+        
