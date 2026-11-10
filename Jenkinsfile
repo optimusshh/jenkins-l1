@@ -6,9 +6,13 @@ pipeline {
 
     stages {
 
+        // --------------------------------
+        // 1. CHECKOUT
+        // --------------------------------
+
         stage('Checkout') {
             steps {
-                echo 'Repository automatically checked out using Poll SCM'
+                echo 'Repository automatically checked out using SCM'
 
                 sh '''
                     echo "Repository files:"
@@ -20,10 +24,16 @@ pipeline {
             }
         }
 
+
+        // --------------------------------
+        // 2. BUILD
+        // --------------------------------
+
         stage('Build') {
             steps {
                 sh '''
                     echo "Building application..."
+
                     mkdir -p build
 
                     echo "Hello from GitHub and Jenkins via github manual stage" > build/index.html
@@ -32,6 +42,11 @@ pipeline {
                 '''
             }
         }
+
+
+        // --------------------------------
+        // 3. TEST
+        // --------------------------------
 
         stage('Test') {
             steps {
@@ -46,6 +61,42 @@ pipeline {
                 '''
             }
         }
+
+
+        // --------------------------------
+        // 4. BACKUP
+        // --------------------------------
+
+        stage('Backup') {
+            steps {
+                echo 'Creating datewise backup on VM3'
+
+                sh '''
+                    ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
+                        -o BatchMode=yes \
+                        deploy@192.168.31.190 \
+                        'set -eu
+
+                        if [ -f /opt/myapp/index.html ]; then
+
+                            BACKUP_FILE="/opt/myapp-backups/index-$(date +%Y%m%d-%H%M%S-%N).html"
+
+                            cp -a /opt/myapp/index.html "$BACKUP_FILE"
+
+                            echo "Backup created successfully:"
+                            echo "$BACKUP_FILE"
+
+                        else
+                            echo "No existing application found. Skipping backup."
+                        fi'
+                '''
+            }
+        }
+
+
+        // --------------------------------
+        // 5. DEPLOY
+        // --------------------------------
 
         stage('Deploy') {
             steps {
@@ -67,6 +118,11 @@ pipeline {
             }
         }
 
+
+        // --------------------------------
+        // 6. VERIFY
+        // --------------------------------
+
         stage('Verify') {
             steps {
                 sh '''
@@ -82,5 +138,6 @@ pipeline {
                 '''
             }
         }
+
     }
 }
