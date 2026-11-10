@@ -6,10 +6,7 @@ pipeline {
 
     stages {
 
-        // --------------------------------
         // 1. CHECKOUT
-        // --------------------------------
-
         stage('Checkout') {
             steps {
                 echo 'Repository automatically checked out using SCM'
@@ -25,10 +22,7 @@ pipeline {
         }
 
 
-        // --------------------------------
         // 2. BUILD
-        // --------------------------------
-
         stage('Build') {
             steps {
                 sh '''
@@ -44,10 +38,7 @@ pipeline {
         }
 
 
-        // --------------------------------
         // 3. TEST
-        // --------------------------------
-
         stage('Test') {
             steps {
                 sh '''
@@ -63,50 +54,84 @@ pipeline {
         }
 
 
-        // --------------------------------
         // 4. BACKUP
-        // --------------------------------
-
         stage('Backup') {
             steps {
-                echo 'Creating datewise backup on VM3'
+                script {
 
-                sh '''
-                    ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
-                        -o BatchMode=yes \
-                        deploy@192.168.31.190 \
-                        'set -eu
+                    env.HAD_PREVIOUS = 'false'
+                    env.BACKUP_FILE = ''
 
-                        if [ -f /opt/myapp/index.html ]; then
+                    // Check whether an application already exists
+                    int appExists = sh(
+                        script: '''
+                            ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
+                                -o BatchMode=yes \
+                                deploy@192.168.31.190 \
+                                'test -f /opt/myapp/index.html'
+                        ''',
+                        returnStatus: true
+                    )
 
-                            BACKUP_FILE="/opt/myapp-backups/index-$(date +%Y%m%d-%H%M%S-%N).html"
+                    if (appExists == 0) {
 
-                            cp -a /opt/myapp/index.html "$BACKUP_FILE"
+                        env.HAD_PREVIOUS = 'true'
 
-                            echo "Backup created successfully:"
-                            echo "$BACKUP_FILE"
+                        // Create unique timestamp
+                        def timestamp = sh(
+                            script: 'date +%Y%m%d-%H%M%S-%N',
+                            returnStdout: true
+                        ).trim()
 
-                        else
-                            echo "No existing application found. Skipping backup."
-                        fi'
-                '''
+                        // Build-specific backup filename
+                        env.BACKUP_FILE =
+                            "/opt/myapp-backups/index-build-${env.BUILD_NUMBER}-${timestamp}.html"
+
+                        // Copy the old application on VM3
+                        sh """
+                            ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
+                                -o BatchMode=yes \
+                                deploy@192.168.31.190 \
+                                "set -eu; cp -a /opt/myapp/index.html '${env.BACKUP_FILE}'"
+                        """
+
+                        echo "Backup created: ${env.BACKUP_FILE}"
+
+                    } else if (appExists == 1) {
+
+                        echo 'No previous deployment exists. Backup skipped.'
+
+                    } else {
+
+                        error('Unable to connect to VM3 or inspect the application file.')
+
+                    }
+                }
             }
         }
 
 
-        // --------------------------------
         // 5. DEPLOY
-        // --------------------------------
-
         stage('Deploy') {
             steps {
                 echo 'Deploying application to VM3'
 
                 sh '''
+                    set -eu
+
+                    REMOTE_TMP="/opt/myapp/index.html.tmp-${BUILD_NUMBER}"
+
+                    # Upload to a temporary filename
                     scp -i /home/jenkins-agent/.ssh/id_ed25519 \
                         -o BatchMode=yes \
                         build/index.html \
-                        deploy@192.168.31.190:/opt/myapp/
+                        deploy@192.168.31.190:"$REMOTE_TMP"
+
+                    # Atomically replace the live application
+                    ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
+                        -o BatchMode=yes \
+                        deploy@192.168.31.190 \
+                        "mv '$REMOTE_TMP' /opt/myapp/index.html"
 
                     echo "Deployment completed"
 
@@ -119,25 +144,120 @@ pipeline {
         }
 
 
-        // --------------------------------
-        // 6. VERIFY
-        // --------------------------------
-
+        // 6. VERIFY AND AUTOMATIC ROLLBACK
         stage('Verify') {
             steps {
-                sh '''
-                    echo "Checking application availability..."
+                script {
 
-                    HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" http://192.168.31.190/)
+                    echo 'Checking application availability...'
 
-                    echo "HTTP Status: $HTTP_CODE"
+                    // Verify HTTP 200 and exact application content
+                    int verifyStatus = sh(
+                        script: '''
+                            set -eu
 
-                    test "$HTTP_CODE" = "200"
+                            RESPONSE_FILE=$(mktemp)
+                            trap 'rm -f "$RESPONSE_FILE"' EXIT
 
-                    echo "Application is responding successfully!"
-                '''
+                            HTTP_CODE=$(curl -sS \
+                                -o "$RESPONSE_FILE" \
+                                -w "%{http_code}" \
+                                http://192.168.31.190/)
+
+                            echo "HTTP Status: $HTTP_CODE"
+
+                            test "$HTTP_CODE" = "200"
+
+                            cmp -s build/index.html "$RESPONSE_FILE"
+
+                            echo "Application content verified successfully"
+                        ''',
+                        returnStatus: true
+                    )
+
+
+                    if (verifyStatus == 0) {
+
+                        echo 'Deployment successful! No rollback required.'
+
+                    } else {
+
+                        echo 'Deployment verification FAILED!'
+                        echo 'Starting automatic rollback...'
+
+
+                        if (env.HAD_PREVIOUS == 'true') {
+
+                            // Restore the precise backup created by this build
+                            sh """
+                                ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
+                                    -o BatchMode=yes \
+                                    deploy@192.168.31.190 \
+                                    "set -eu; \
+                                    cp -a '${env.BACKUP_FILE}' \
+                                    '/opt/myapp/index.html.rollback-${env.BUILD_NUMBER}'; \
+                                    mv '/opt/myapp/index.html.rollback-${env.BUILD_NUMBER}' \
+                                    /opt/myapp/index.html"
+                            """
+
+                            echo 'Previous application file restored.'
+
+                            // Retrieve backup so we can compare HTTP response
+                            sh """
+                                scp -i /home/jenkins-agent/.ssh/id_ed25519 \
+                                    -o BatchMode=yes \
+                                    deploy@192.168.31.190:"${env.BACKUP_FILE}" \
+                                    build/rollback-expected.html
+                            """
+
+                            // Verify restored application
+                            int rollbackStatus = sh(
+                                script: '''
+                                    set -eu
+
+                                    RESPONSE_FILE=$(mktemp)
+                                    trap 'rm -f "$RESPONSE_FILE"' EXIT
+
+                                    HTTP_CODE=$(curl -sS \
+                                        -o "$RESPONSE_FILE" \
+                                        -w "%{http_code}" \
+                                        http://192.168.31.190/)
+
+                                    echo "Rollback HTTP Status: $HTTP_CODE"
+
+                                    test "$HTTP_CODE" = "200"
+
+                                    cmp -s build/rollback-expected.html "$RESPONSE_FILE"
+
+                                    echo "Previous version successfully restored and verified."
+                                ''',
+                                returnStatus: true
+                            )
+
+                            if (rollbackStatus != 0) {
+
+                                error('Rollback file was restored, but post-rollback HTTP verification failed. Check Nginx and network connectivity.')
+
+                            } else {
+
+                                error('New deployment failed. Previous version restored successfully. Build marked FAILURE.')
+                            }
+
+                        } else {
+
+                            // No previous application existed
+                            sh """
+                                ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
+                                    -o BatchMode=yes \
+                                    deploy@192.168.31.190 \
+                                    'rm -f /opt/myapp/index.html'
+                            """
+
+                            error('First deployment failed. No previous version existed; failed application file removed.')
+                        }
+                    }
+                }
             }
         }
-
     }
 }
