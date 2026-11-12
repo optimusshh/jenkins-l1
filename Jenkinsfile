@@ -30,7 +30,7 @@ pipeline {
 
                     mkdir -p build
 
-                    echo "NEW RELEASE - rollback test build $BUILD_NUMBER" > build/index.html
+                    echo "Hello from GitHub and Jenkins via github manual stage" > build/index.html
 
                     echo "Build completed"
                 '''
@@ -46,7 +46,7 @@ pipeline {
 
                     test -f build/index.html
 
-                    grep -q "NEW RELEASE - rollback test build $BUILD_NUMBER" build/index.html
+                    grep -q "Hello from GitHub and Jenkins via github manual stage" build/index.html
 
                     echo "All tests passed!"
                 '''
@@ -166,7 +166,7 @@ pipeline {
 
                             echo "HTTP Status: $HTTP_CODE"
 
-                            test "$HTTP_CODE" = "418"
+                            test "$HTTP_CODE" = "200"
 
                             cmp -s build/index.html "$RESPONSE_FILE"
 
