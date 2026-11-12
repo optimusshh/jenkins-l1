@@ -6,7 +6,10 @@ pipeline {
 
     stages {
 
+        // =====================================
         // 1. CHECKOUT
+        // =====================================
+
         stage('Checkout') {
             steps {
                 echo 'Repository automatically checked out using SCM'
@@ -22,7 +25,10 @@ pipeline {
         }
 
 
+        // =====================================
         // 2. BUILD
+        // =====================================
+
         stage('Build') {
             steps {
                 sh '''
@@ -38,7 +44,10 @@ pipeline {
         }
 
 
+        // =====================================
         // 3. TEST
+        // =====================================
+
         stage('Test') {
             steps {
                 sh '''
@@ -54,7 +63,10 @@ pipeline {
         }
 
 
+        // =====================================
         // 4. BACKUP
+        // =====================================
+
         stage('Backup') {
             steps {
                 script {
@@ -62,7 +74,9 @@ pipeline {
                     env.HAD_PREVIOUS = 'false'
                     env.BACKUP_FILE = ''
 
-                    // Check whether an application already exists
+                    echo 'Checking for existing application on VM3'
+
+                    // Check whether the current application exists
                     int appExists = sh(
                         script: '''
                             ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
@@ -77,17 +91,17 @@ pipeline {
 
                         env.HAD_PREVIOUS = 'true'
 
-                        // Create unique timestamp
+                        // Generate a unique timestamp
                         def timestamp = sh(
                             script: 'date +%Y%m%d-%H%M%S-%N',
                             returnStdout: true
                         ).trim()
 
-                        // Build-specific backup filename
+                        // Create build-specific backup filename
                         env.BACKUP_FILE =
                             "/opt/myapp-backups/index-build-${env.BUILD_NUMBER}-${timestamp}.html"
 
-                        // Copy the old application on VM3
+                        // Back up the existing application on VM3
                         sh """
                             ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
                                 -o BatchMode=yes \
@@ -95,11 +109,11 @@ pipeline {
                                 "set -eu; cp -a /opt/myapp/index.html '${env.BACKUP_FILE}'"
                         """
 
-                        echo "Backup created: ${env.BACKUP_FILE}"
+                        echo "Backup created successfully: ${env.BACKUP_FILE}"
 
                     } else if (appExists == 1) {
 
-                        echo 'No previous deployment exists. Backup skipped.'
+                        echo 'No previous application found. Backup skipped.'
 
                     } else {
 
@@ -111,7 +125,10 @@ pipeline {
         }
 
 
+        // =====================================
         // 5. DEPLOY
+        // =====================================
+
         stage('Deploy') {
             steps {
                 echo 'Deploying application to VM3'
@@ -121,7 +138,7 @@ pipeline {
 
                     REMOTE_TMP="/opt/myapp/index.html.tmp-${BUILD_NUMBER}"
 
-                    # Upload to a temporary filename
+                    # Upload application to a temporary file
                     scp -i /home/jenkins-agent/.ssh/id_ed25519 \
                         -o BatchMode=yes \
                         build/index.html \
@@ -135,6 +152,7 @@ pipeline {
 
                     echo "Deployment completed"
 
+                    # Verify the deployed file on VM3
                     ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
                         -o BatchMode=yes \
                         deploy@192.168.31.190 \
@@ -144,14 +162,17 @@ pipeline {
         }
 
 
+        // =====================================
         // 6. VERIFY AND AUTOMATIC ROLLBACK
+        // =====================================
+
         stage('Verify') {
             steps {
                 script {
 
                     echo 'Checking application availability...'
 
-                    // Verify HTTP 200 and exact application content
+                    // Check HTTP status and exact application content
                     int verifyStatus = sh(
                         script: '''
                             set -eu
@@ -176,19 +197,21 @@ pipeline {
                     )
 
 
+                    // If deployment verification succeeds
                     if (verifyStatus == 0) {
 
                         echo 'Deployment successful! No rollback required.'
 
                     } else {
 
+                        // If deployment verification fails
                         echo 'Deployment verification FAILED!'
                         echo 'Starting automatic rollback...'
 
 
                         if (env.HAD_PREVIOUS == 'true') {
 
-                            // Restore the precise backup created by this build
+                            // Restore the exact backup created by this build
                             sh """
                                 ssh -i /home/jenkins-agent/.ssh/id_ed25519 \
                                     -o BatchMode=yes \
@@ -202,7 +225,7 @@ pipeline {
 
                             echo 'Previous application file restored.'
 
-                            // Retrieve backup so we can compare HTTP response
+                            // Download backup to compare with HTTP response
                             sh """
                                 scp -i /home/jenkins-agent/.ssh/id_ed25519 \
                                     -o BatchMode=yes \
@@ -234,6 +257,7 @@ pipeline {
                                 returnStatus: true
                             )
 
+
                             if (rollbackStatus != 0) {
 
                                 error('Rollback file was restored, but post-rollback HTTP verification failed. Check Nginx and network connectivity.')
@@ -241,6 +265,7 @@ pipeline {
                             } else {
 
                                 error('New deployment failed. Previous version restored successfully. Build marked FAILURE.')
+
                             }
 
                         } else {
@@ -254,6 +279,7 @@ pipeline {
                             """
 
                             error('First deployment failed. No previous version existed; failed application file removed.')
+
                         }
                     }
                 }
